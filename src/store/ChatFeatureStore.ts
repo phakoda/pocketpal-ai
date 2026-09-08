@@ -25,7 +25,10 @@ class ChatFeatureStore {
   }
 
   hasModelSystemPrompt(modelId: string): boolean {
-    return Object.prototype.hasOwnProperty.call(this.modelSystemPrompts, modelId);
+    return Object.prototype.hasOwnProperty.call(
+      this.modelSystemPrompts,
+      modelId,
+    );
   }
 
   getModelSystemPrompt(modelId?: string): string | undefined {
