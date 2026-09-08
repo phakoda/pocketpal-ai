@@ -2,6 +2,7 @@ import {View} from 'react-native';
 import React from 'react';
 
 import {InputSlider} from '../InputSlider';
+import {ChatContextSettings} from '../ChatContextSettings/ChatContextSettings';
 import {Text, Switch, SegmentedButtons} from 'react-native-paper';
 
 import {TextInput} from '..';
@@ -199,6 +200,11 @@ export const CompletionSettings: React.FC<Props> = ({
 
   return (
     <View style={styles.container} testID="completion-settings">
+      <ChatContextSettings
+        settings={settings}
+        onChange={onChange}
+        disabled={disabled}
+      />
       {renderNPredictField()}
       {renderSwitch('include_thinking_in_context')}
       {renderSlider({name: 'temperature'})}

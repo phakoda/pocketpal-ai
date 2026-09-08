@@ -3,6 +3,7 @@ import {fetchText} from './providers/http';
 import {TavilyProvider} from './providers/tavily';
 import {BraveProvider} from './providers/brave';
 import {ExaProvider} from './providers/exa';
+import {TinyFishProvider} from './providers/tinyfish';
 import {ParallelProvider} from './providers/parallel';
 
 export type {
@@ -33,6 +34,8 @@ export const createSearchProvider = (
       return new BraveProvider(getKey);
     case 'exa':
       return new ExaProvider(getKey);
+    case 'tinyfish':
+      return new TinyFishProvider(getKey);
     case 'parallel':
       return new ParallelProvider(getKey);
   }
