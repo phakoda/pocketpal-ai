@@ -11,11 +11,18 @@ export function safeSearchUrl(value: unknown): string | undefined {
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase();
-    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password ||
-        host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') ||
-        !host.includes('.') || host.startsWith('[') ||
-        /^(0|10|127|169\.254|192\.168)\./.test(host) ||
-        /^172\.(1[6-9]|2\d|3[01])\./.test(host)) {
+    if (
+      !['https:', 'http:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      host === 'localhost' ||
+      host.endsWith('.localhost') ||
+      host.endsWith('.local') ||
+      !host.includes('.') ||
+      host.startsWith('[') ||
+      /^(0|10|127|169\.254|192\.168)\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    ) {
       return undefined;
     }
     // Existing read_url URL allowlisting and network validation still apply.
@@ -25,11 +32,18 @@ export function safeSearchUrl(value: unknown): string | undefined {
   }
 }
 
-export function parseTinyFishResults(value: unknown, maxResults: number): SearchHit[] {
+export function parseTinyFishResults(
+  value: unknown,
+  maxResults: number,
+): SearchHit[] {
   if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > 8) {
     throw new Error('TinyFish result count must be between 1 and 8.');
   }
-  if (!value || typeof value !== 'object' || !Array.isArray((value as {results?: unknown}).results)) {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !Array.isArray((value as {results?: unknown}).results)
+  ) {
     throw new Error('TinyFish returned an invalid search response.');
   }
   const seen = new Set<string>();
@@ -40,11 +54,20 @@ export function parseTinyFishResults(value: unknown, maxResults: number): Search
     }
     const row = item as Record<string, unknown>;
     const url = safeSearchUrl(row.url);
-    if (!url || seen.has(url) || typeof row.title !== 'string' || typeof row.snippet !== 'string') {
+    if (
+      !url ||
+      seen.has(url) ||
+      typeof row.title !== 'string' ||
+      typeof row.snippet !== 'string'
+    ) {
       continue;
     }
     seen.add(url);
-    hits.push({url, title: row.title.slice(0, 300), snippet: row.snippet.slice(0, 2000)});
+    hits.push({
+      url,
+      title: row.title.slice(0, 300),
+      snippet: row.snippet.slice(0, 2000),
+    });
     if (hits.length === maxResults) {
       break;
     }
@@ -52,13 +75,20 @@ export function parseTinyFishResults(value: unknown, maxResults: number): Search
   return hits;
 }
 
-/** Direct TinyFish Search API; not the undocumented Monid proxy. */
+/** Direct TinyFish Search API. Monid's advertised keyless product is a separate route. */
 export class TinyFishProvider implements SearchProvider {
   readonly id = 'tinyfish' as const;
-  constructor(private getKey: () => string, private request: typeof fetch = fetch) {}
+  constructor(
+    private getKey: () => string,
+    private request: typeof fetch = fetch,
+  ) {}
 
   async search(query: string, options: SearchOptions): Promise<SearchHit[]> {
-    if (!Number.isSafeInteger(options.maxResults) || options.maxResults < 1 || options.maxResults > 8) {
+    if (
+      !Number.isSafeInteger(options.maxResults) ||
+      options.maxResults < 1 ||
+      options.maxResults > 8
+    ) {
       throw new Error('TinyFish result count must be between 1 and 8.');
     }
     const text = query.trim();
@@ -67,18 +97,23 @@ export class TinyFishProvider implements SearchProvider {
     }
     const key = this.getKey().trim();
     if (!key || /[\r\n]/.test(key)) {
-      throw new Error('Set a TinyFish API key in Settings → Internet Search.');
+      throw new Error(
+        'TinyFish (direct API) requires a TinyFish API key. This is not the keyless Monid service advertised in the linked article.',
+      );
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
     try {
-      const response = await this.request(`${ENDPOINT}?query=${encodeURIComponent(text)}`, {
-        method: 'GET',
-        headers: {'X-API-Key': key, Accept: 'application/json'},
-        signal: controller.signal,
-        // Do not forward the API credential to a redirected host.
-        redirect: 'error',
-      });
+      const response = await this.request(
+        `${ENDPOINT}?query=${encodeURIComponent(text)}`,
+        {
+          method: 'GET',
+          headers: {'X-API-Key': key, Accept: 'application/json'},
+          signal: controller.signal,
+          // Do not forward the API credential to a redirected host.
+          redirect: 'error',
+        },
+      );
       if (!response.ok) {
         throw new Error(`TinyFish search failed (HTTP ${response.status}).`);
       }
@@ -105,7 +140,9 @@ export class TinyFishProvider implements SearchProvider {
       if (error instanceof Error && error.message.startsWith('TinyFish ')) {
         throw error;
       }
-      throw new Error('TinyFish search could not complete. Check your connection and API key.');
+      throw new Error(
+        'TinyFish search could not complete. Check your connection and API key.',
+      );
     } finally {
       clearTimeout(timeout);
     }

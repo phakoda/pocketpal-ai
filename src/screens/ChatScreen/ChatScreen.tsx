@@ -257,8 +257,8 @@ export const ChatScreen: React.FC = observer(() => {
   // Otherwise, show the regular chat view
   return (
     <>
-      <ConversationControls />
       <ChatView
+        customContent={<ConversationControls />}
         renderBubble={renderBubble}
         messages={chatSessionStore.currentSessionMessages}
         activePal={activePal}

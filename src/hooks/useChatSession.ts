@@ -668,6 +668,7 @@ export const useChatSession = (
       let toolCallTokensRaw = 0;
       const TOOL_TOKEN_BUCKET = 10;
 
+      let memoryRunSucceeded = false;
       for await (const event of events) {
         if (abortRef.current?.signal.aborted && event.type === 'token') {
           continue;
@@ -722,11 +723,27 @@ export const useChatSession = (
           lastYieldTs = performance.now();
         }
 
+        if (event.type === 'run_finished') {
+          const reply = event.result.finalResult;
+          memoryRunSucceeded =
+            !event.result.hitMaxTurns &&
+            !!reply.content?.trim() &&
+            !reply.interrupted &&
+            !reply.context_full &&
+            !reply.truncated &&
+            !reply.tool_calls?.length;
+        }
         if (event.type === 'run_failed') {
           throw event.error;
         }
       }
 
+      // The event stream has drained. Never run two native completions at once
+      // or turn a successful delivered answer into a failed turn on save error.
+      if (memoryRunSucceeded && abortRef.current?.signal.aborted === false) {
+        modelStore.setIsStreaming(false);
+        await conversationRun.finalizeMemories();
+      }
       modelStore.setInferencing(false);
       modelStore.setIsStreaming(false);
       chatSessionStore.setIsGenerating(false);

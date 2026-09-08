@@ -22,7 +22,7 @@ export const SEARCH_PROVIDERS: SearchProviderMeta[] = [
   {id: 'tavily', label: 'Tavily', selectable: true},
   {id: 'brave', label: 'Brave', selectable: true},
   {id: 'exa', label: 'Exa', selectable: true},
-  {id: 'tinyfish', label: 'TinyFish', selectable: true},
+  {id: 'tinyfish', label: 'TinyFish (direct API)', selectable: true},
   {id: 'parallel', label: 'Parallel', selectable: false},
 ];
 

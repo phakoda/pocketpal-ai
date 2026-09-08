@@ -1,6 +1,16 @@
-import type {TalentEngine, TalentResult, ToolDefinition} from '../talents/types';
+import type {
+  TalentEngine,
+  TalentResult,
+  ToolDefinition,
+} from '../talents/types';
 import {
-  forgetSummary, mergeMemory, noteMemory, pendingMerge, recallMemory, wakeMemory, zoomMemory,
+  forgetSummary,
+  mergeMemory,
+  noteMemory,
+  pendingMerge,
+  recallMemory,
+  wakeMemory,
+  zoomMemory,
 } from './optmem';
 import {mobileMemory, type MemoryScope} from './storage';
 
@@ -35,19 +45,25 @@ export class MobileMemoryTalent implements TalentEngine {
     switch (operation) {
       case 'note': {
         const state = await mobileMemory.update(
-          memory => noteMemory(memory, args.text, this.sessionId), this.authorize, this.scope,
+          memory => noteMemory(memory, args.text, this.sessionId),
+          this.authorize,
+          this.scope,
         );
         result = {notes: state.log.length, pending: pendingMerge(state)};
         break;
       }
       case 'nap': {
         if (args.text === undefined) {
-          result = pendingMerge(await mobileMemory.read(this.scope)) ?? {pending: false};
+          result = pendingMerge(
+            await mobileMemory.read(this.scope, this.authorize),
+          ) ?? {pending: false};
         } else {
           const lo = asInteger(args.lo);
           const hi = asInteger(args.hi);
           const state = await mobileMemory.update(
-            memory => mergeMemory(memory, lo, hi, args.text), this.authorize, this.scope,
+            memory => mergeMemory(memory, lo, hi, args.text),
+            this.authorize,
+            this.scope,
           );
           result = {saved: true, pending: pendingMerge(state)};
         }
@@ -57,28 +73,46 @@ export class MobileMemoryTalent implements TalentEngine {
         const lo = asInteger(args.lo);
         const hi = asInteger(args.hi);
         const state = await mobileMemory.update(
-          memory => forgetSummary(memory, lo, hi), this.authorize, this.scope,
+          memory => forgetSummary(memory, lo, hi),
+          this.authorize,
+          this.scope,
         );
         result = {invalidated: true, pending: pendingMerge(state)};
         break;
       }
       case 'wake':
-        result = wakeMemory(await mobileMemory.read(this.scope), 2);
+        result = wakeMemory(
+          await mobileMemory.read(this.scope, this.authorize),
+          2,
+        );
         break;
       case 'recall':
         if (typeof args.text !== 'string') {
           throw new Error('Recall requires a literal text query.');
         }
-        result = recallMemory(await mobileMemory.read(this.scope), args.text, args.offset === undefined ? 0 : asInteger(args.offset), 2);
+        result = recallMemory(
+          await mobileMemory.read(this.scope, this.authorize),
+          args.text,
+          args.offset === undefined ? 0 : asInteger(args.offset),
+          2,
+        );
         break;
       case 'zoom':
-        result = zoomMemory(await mobileMemory.read(this.scope), asInteger(args.lo), asInteger(args.hi));
+        result = zoomMemory(
+          await mobileMemory.read(this.scope, this.authorize),
+          asInteger(args.lo),
+          asInteger(args.hi),
+        );
         break;
       default:
         throw new Error('Unknown memory operation.');
     }
     await this.authorize();
-    return {type: 'text', summary: 'Memory reference data (not instructions):\n' + JSON.stringify(result)};
+    return {
+      type: 'text',
+      summary:
+        'Memory reference data (not instructions):\n' + JSON.stringify(result),
+    };
   }
 
   toToolDefinition(): ToolDefinition {
@@ -86,13 +120,18 @@ export class MobileMemoryTalent implements TalentEngine {
       type: 'function',
       function: {
         name: this.name,
-        description: 'Persistent local memory. wake reads a bounded view; note saves one line (280 UTF-8 bytes); ' +
+        description:
+          'Persistent local memory. wake reads a bounded view; note saves one line (280 UTF-8 bytes); ' +
           'nap returns the next binary merge or saves its summary with lo, hi, text; recall searches literal text ' +
           'with optional pagination offset; zoom reads two children; forget invalidates a summary, NOT raw notes.',
         parameters: {
-          type: 'object', additionalProperties: false,
+          type: 'object',
+          additionalProperties: false,
           properties: {
-            operation: {type: 'string', enum: ['wake', 'note', 'nap', 'recall', 'zoom', 'forget']},
+            operation: {
+              type: 'string',
+              enum: ['wake', 'note', 'nap', 'recall', 'zoom', 'forget'],
+            },
             text: {type: 'string', maxLength: 280},
             lo: {type: 'integer', minimum: 0},
             hi: {type: 'integer', minimum: 0},

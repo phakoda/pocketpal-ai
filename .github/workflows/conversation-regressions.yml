@@ -45,6 +45,9 @@ jobs:
         run: yarn install --frozen-lockfile
       - name: Behavioral regression harness
         run: node --test scripts/test-conversation-features.cjs
+      - name: Synthetic controls regression harness
+        if: '!cancelled()'
+        run: node --test scripts/test-conversation-controls.cjs
       - name: Full application typecheck
         if: '!cancelled()'
         run: yarn typecheck
