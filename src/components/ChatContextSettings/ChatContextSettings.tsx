@@ -1,12 +1,13 @@
 import React, {useEffect, useState} from 'react';
 import {View} from 'react-native';
 import {Button, SegmentedButtons, Switch, Text} from 'react-native-paper';
+import {observer} from 'mobx-react';
 
 import {InputSlider} from '../InputSlider';
 import {TextInput} from '../TextInput';
 import {createStyles} from '../CompletionSettings/styles';
 import {useTheme} from '../../hooks';
-import {chatSessionStore, modelStore, serverStore} from '../../store';
+import {chatSessionStore, modelStore, palStore, serverStore} from '../../store';
 import {chatFeatureStore} from '../../store/ChatFeatureStore';
 import {CompletionParams} from '../../utils/completionTypes';
 import {getModelMaxContext} from '../../utils/contextLimits';
@@ -29,7 +30,7 @@ const formatMemory = (bytes: number): string => {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`;
 };
 
-export const ChatContextSettings: React.FC<Props> = ({
+const ChatContextSettingsView: React.FC<Props> = ({
   settings,
   onChange,
   disabled = false,
@@ -39,6 +40,10 @@ export const ChatContextSettings: React.FC<Props> = ({
   const activeModel = modelStore.activeModel;
   const activeModelId = activeModel?.id;
   const activeSessionId = chatSessionStore.activeSessionId || undefined;
+  const activePalId = chatSessionStore.activePalId;
+  const activePal = activePalId
+    ? palStore.pals.find(pal => pal.id === activePalId)
+    : undefined;
   const currentContextLimit = modelStore.contextInitParams.n_ctx;
   const embeddedSystemPrompt = activeModel?.chatTemplate?.systemPrompt ?? '';
   const remoteMaxContext = activeModelId
@@ -51,6 +56,9 @@ export const ChatContextSettings: React.FC<Props> = ({
   );
   const [memoriesEnabled, setMemoriesEnabled] = useState(
     chatFeatureStore.getMemoriesEnabled(activeSessionId),
+  );
+  const [palMemoriesEnabled, setPalMemoriesEnabled] = useState(
+    chatFeatureStore.getPalMemoriesEnabled(activePalId),
   );
   const [systemPrompt, setSystemPrompt] = useState(
     activeModelId
@@ -66,6 +74,10 @@ export const ChatContextSettings: React.FC<Props> = ({
   useEffect(() => {
     setMemoriesEnabled(chatFeatureStore.getMemoriesEnabled(activeSessionId));
   }, [activeSessionId]);
+
+  useEffect(() => {
+    setPalMemoriesEnabled(chatFeatureStore.getPalMemoriesEnabled(activePalId));
+  }, [activePalId]);
 
   useEffect(() => {
     if (!activeModelId) {
@@ -105,6 +117,14 @@ export const ChatContextSettings: React.FC<Props> = ({
   const updateMemories = (enabled: boolean) => {
     setMemoriesEnabled(enabled);
     chatFeatureStore.setMemoriesEnabled(activeSessionId, enabled);
+  };
+
+  const updatePalMemories = (enabled: boolean) => {
+    if (!activePalId) {
+      return;
+    }
+    setPalMemoriesEnabled(enabled);
+    chatFeatureStore.setPalMemoriesEnabled(activePalId, enabled);
   };
 
   const updateSystemPrompt = (prompt: string) => {
@@ -184,6 +204,27 @@ export const ChatContextSettings: React.FC<Props> = ({
         </Text>
       </View>
 
+      {activePal && (
+        <View style={styles.settingItem}>
+          <View style={styles.switchHeader}>
+            <Text variant="labelSmall" style={styles.settingLabel}>
+              PAL MEMORIES
+            </Text>
+            <Switch
+              value={palMemoriesEnabled}
+              onValueChange={updatePalMemories}
+              disabled={disabled}
+              testID="pal-memories-switch"
+            />
+          </View>
+          <Text style={styles.description}>
+            Give {activePal.name} a separate stored memory across chats. Only
+            compact memories from previous conversations with this Pal are
+            recalled; memories belonging to other Pals are never mixed in.
+          </Text>
+        </View>
+      )}
+
       <View style={styles.settingItem}>
         <Text variant="labelSmall" style={styles.settingLabel}>
           MODEL SYSTEM PROMPT
@@ -257,3 +298,5 @@ export const ChatContextSettings: React.FC<Props> = ({
     </>
   );
 };
+
+export const ChatContextSettings = observer(ChatContextSettingsView);
