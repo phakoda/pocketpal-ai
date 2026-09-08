@@ -52,8 +52,8 @@ describe('ChatFeatureStore Pal memories', () => {
     expect(snapshots.some(snapshot => snapshot.sessionId === 'session-0')).toBe(
       false,
     );
-    expect(snapshots.some(snapshot => snapshot.sessionId === 'session-19')).toBe(
-      true,
-    );
+    expect(
+      snapshots.some(snapshot => snapshot.sessionId === 'session-19'),
+    ).toBe(true);
   });
 });
