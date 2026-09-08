@@ -1,0 +1,48 @@
+name: Delete old feature branches
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/delete-old-branches.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  delete-old-branches:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branches=(
+            'feat/adaptive-context-optmem-tinyfish-20260908'
+            'feat/context-memories-search'
+            'feat/context-memories-search-duplicate'
+            'repair/prepare-memory-search-ui'
+            'noop-delete-probe'
+          )
+
+          for branch in "${branches[@]}"; do
+            ref="heads/${branch}"
+            if gh api --repo "$GITHUB_REPOSITORY" "repos/$GITHUB_REPOSITORY/git/ref/${ref}" >/dev/null 2>&1; then
+              echo "Deleting $branch"
+              gh api --repo "$GITHUB_REPOSITORY" --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/${ref}"
+            else
+              echo "$branch already absent"
+            fi
+          done
+
+          for branch in "${branches[@]}"; do
+            ref="heads/${branch}"
+            if gh api --repo "$GITHUB_REPOSITORY" "repos/$GITHUB_REPOSITORY/git/ref/${ref}" >/dev/null 2>&1; then
+              echo "::error::Branch still exists: $branch"
+              exit 1
+            fi
+          done
+
+          echo "All requested branches are absent."
