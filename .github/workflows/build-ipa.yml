@@ -122,7 +122,8 @@ jobs:
           fi
           plutil -lint ios/GoogleService-Info.plist
 
-      - name: Verify signing configuration is available
+      - name: Detect signing configuration
+        id: signing
         env:
           MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
           MATCH_GITHUB_TOKEN: ${{ secrets.MATCH_GITHUB_TOKEN }}
@@ -131,16 +132,24 @@ jobs:
           APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
         run: |
           set -euo pipefail
-          missing=0
+          available=true
           for name in MATCH_GIT_URL MATCH_GITHUB_TOKEN APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID APP_STORE_CONNECT_API_KEY_CONTENT; do
             if [ -z "${!name:-}" ]; then
-              echo "::error::Missing required repository secret: $name"
-              missing=1
+              available=false
             fi
           done
-          exit "$missing"
+          if [ "$available" = true ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "kind=signed" >> "$GITHUB_OUTPUT"
+            echo "Signing material is available; building an installable development IPA."
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "kind=unsigned" >> "$GITHUB_OUTPUT"
+            echo "::warning::iOS signing secrets are not configured. Building an unsigned device IPA archive. It is a valid IPA structure for build inspection but is not installable on a stock iOS device until signed."
+          fi
 
       - name: Build signed IPA
+        if: steps.signing.outputs.available == 'true'
         working-directory: ios
         env:
           CI: 'true'
@@ -153,7 +162,46 @@ jobs:
           APP_STORE_CONNECT_USER_ID: ${{ secrets.APP_STORE_CONNECT_USER_ID }}
         run: bundle exec fastlane build_for_device_farm
 
-      - name: Verify IPA structure and signature
+      - name: Build unsigned iOS device app
+        if: steps.signing.outputs.available != 'true'
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace ios/PocketPal.xcworkspace \
+            -scheme PocketPal \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath ios/build/DerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            ONLY_ACTIVE_ARCH=NO \
+            build \
+            2>&1 | tee ios-device-build.log
+
+      - name: Package unsigned IPA
+        if: steps.signing.outputs.available != 'true'
+        run: |
+          set -euo pipefail
+          APP=ios/build/DerivedData/Build/Products/Release-iphoneos/PocketPal.app
+          test -d "$APP"
+          rm -rf ios/build/UnsignedPayload
+          mkdir -p ios/build/UnsignedPayload/Payload
+          cp -R "$APP" ios/build/UnsignedPayload/Payload/PocketPal.app
+          cat > ios/build/UnsignedPayload/UNSIGNED_BUILD.txt << 'EOF'
+          This IPA was built without Apple signing credentials because this repository has no iOS signing secrets configured.
+          It is useful for build/package inspection but is not installable on a stock iOS device until it is signed with a valid certificate and provisioning profile.
+          EOF
+          (
+            cd ios/build/UnsignedPayload
+            /usr/bin/zip -qry ../PocketPal-unsigned.ipa Payload UNSIGNED_BUILD.txt
+          )
+
+      - name: Verify signed IPA
+        if: steps.signing.outputs.available == 'true'
         run: |
           set -euo pipefail
           IPA=ios/build/PocketPal.ipa
@@ -166,19 +214,42 @@ jobs:
           codesign --verify --deep --strict "$APP"
           codesign -dv --verbose=2 "$APP" 2>&1 | tee ipa-signature.txt
 
+      - name: Verify unsigned IPA
+        if: steps.signing.outputs.available != 'true'
+        run: |
+          set -euo pipefail
+          IPA=ios/build/PocketPal-unsigned.ipa
+          test -s "$IPA"
+          unzip -t "$IPA" >/dev/null
+          work=$(mktemp -d)
+          unzip -q "$IPA" -d "$work"
+          APP="$work/Payload/PocketPal.app"
+          test -d "$APP"
+          test -f "$work/UNSIGNED_BUILD.txt"
+          if codesign --verify --deep --strict "$APP" >/dev/null 2>&1; then
+            echo "::error::Unsigned fallback unexpectedly produced a signed app."
+            exit 1
+          fi
+          file "$APP/PocketPal" | tee ipa-binary-info.txt
+
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: pocketpal-ios-ipa
-          path: ios/build/PocketPal.ipa
+          name: pocketpal-ios-${{ steps.signing.outputs.kind }}-ipa
+          path: |
+            ios/build/PocketPal.ipa
+            ios/build/PocketPal-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload signature details
+      - name: Upload IPA verification details
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pocketpal-ios-signature
-          path: ipa-signature.txt
+          name: pocketpal-ios-${{ steps.signing.outputs.kind }}-verification
+          path: |
+            ipa-signature.txt
+            ipa-binary-info.txt
+            ios-device-build.log
           if-no-files-found: ignore
           retention-days: 14
