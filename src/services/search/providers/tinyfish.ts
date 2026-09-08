@@ -1,4 +1,9 @@
-import type {SearchProvider, SearchHit, SearchOptions} from '../types';
+import type {
+  PageContent,
+  SearchProvider,
+  SearchHit,
+  SearchOptions,
+} from '../types';
 import {fetchJson, requireKey} from './http';
 
 type TinyFishResult = {
@@ -13,6 +18,16 @@ type TinyFishSearchResponse = {
   results?: TinyFishResult[];
   total_results?: number;
   page?: number;
+};
+
+type TinyFishFetchResponse = {
+  results?: Array<{
+    url?: string;
+    title?: string;
+    format?: string;
+    text?: string;
+  }>;
+  errors?: unknown[];
 };
 
 export class TinyFishProvider implements SearchProvider {
@@ -38,5 +53,29 @@ export class TinyFishProvider implements SearchProvider {
         snippet: result.snippet ?? '',
       }))
       .filter(hit => hit.url.length > 0);
+  }
+
+  async read(url: string): Promise<PageContent> {
+    const key = requireKey(this.getKey(), 'TinyFish');
+    const data = await fetchJson<TinyFishFetchResponse>(
+      'https://api.fetch.tinyfish.ai',
+      {
+        method: 'POST',
+        headers: {
+          'X-API-Key': key,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({urls: [url]}),
+      },
+    );
+    const result = data.results?.[0];
+    if (!result?.text) {
+      throw new Error('TinyFish returned no page content');
+    }
+    return {
+      url: result.url ?? url,
+      title: result.title,
+      text: result.text,
+    };
   }
 }
