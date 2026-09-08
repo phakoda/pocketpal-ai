@@ -7,7 +7,8 @@ export const estimateTextTokens = (text: string): number =>
 
 export const estimateMessagesTokens = (messages: PromptMessage[]): number =>
   messages.reduce(
-    (total, message) => total + estimateTextTokens(contentToText(message.content)) + 4,
+    (total, message) =>
+      total + estimateTextTokens(contentToText(message.content)) + 4,
     0,
   );
 
