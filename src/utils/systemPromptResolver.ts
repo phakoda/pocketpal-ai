@@ -62,13 +62,20 @@ type ChatMessage = {role: string; content?: unknown} & Record<string, unknown>;
 const optMemLineBudget = (contextLimit: number): number =>
   Math.max(4, Math.min(20, Math.floor(contextLimit / 1024) + 2));
 
+const palMemorySnapshotLineBudget = (contextLimit: number): number =>
+  Math.max(4, Math.min(10, Math.floor(contextLimit / 2048) + 3));
+
 /**
  * Fold the system prompt + every talent fragment into ONE leading system
  * message; a second system message makes strict chat templates raise.
  *
  * Context management happens here because every local/remote completion path
  * passes through this single prompt assembly point:
- * - memories ON: old turns are represented by an OptMem-style binary cover;
+ * - optional Pal memory: the current conversation is persisted as a compact
+ *   snapshot under its Pal UUID, while the prompt receives only snapshots from
+ *   previous conversations with that same Pal;
+ * - conversation memories ON: old turns are represented by an OptMem-style
+ *   binary cover;
  * - all chats: once estimated usage crosses 82% of n_ctx, oldest raw turns are
  *   compacted toward a 68% target, leaving headroom for the next completion.
  */
@@ -89,15 +96,53 @@ export function assembleMessages(
       4096,
   );
   const sessionId = chatSessionStore.activeSessionId || undefined;
+  const activePalId = chatSessionStore.activePalId;
   const memoriesEnabled =
     chatFeatureStore.ensureConversationPreference(sessionId);
+  const palMemoriesEnabled =
+    chatFeatureStore.getPalMemoriesEnabled(activePalId);
 
   let workingMessages = followingMessages as PromptMessage[];
 
-  // Memory mode keeps a verbatim recent window and replaces older raw turns
-  // with a bounded binary-decay cover. This is derived from the durable chat
-  // history on each prompt, so there is no hidden background worker or second
-  // source of truth to get out of sync after edits.
+  // Pal memories are a separate persistent archive keyed by Pal UUID. The
+  // current conversation refreshes only its own snapshot, and that snapshot is
+  // explicitly excluded from the memory injected into this prompt. This keeps
+  // Pal A isolated from Pal B and avoids duplicating the active chat history.
+  if (palMemoriesEnabled && activePalId && sessionId) {
+    const currentSnapshot = buildOptMemCover(
+      workingMessages,
+      palMemorySnapshotLineBudget(contextLimit),
+    );
+    if (currentSnapshot) {
+      chatFeatureStore.upsertPalMemorySnapshot(
+        activePalId,
+        sessionId,
+        currentSnapshot,
+      );
+    }
+
+    const previousSnapshots = chatFeatureStore.getPalMemorySnapshots(
+      activePalId,
+      sessionId,
+    );
+    const palMemoryCover = buildOptMemCover(
+      previousSnapshots.map((snapshot, index) => ({
+        role: 'assistant',
+        content: `Previous Pal chat ${index + 1}: ${snapshot.cover}`,
+      })),
+      optMemLineBudget(contextLimit),
+    );
+    if (palMemoryCover) {
+      parts.push(
+        `Stored Pal memory from previous conversations with this Pal only:\n${palMemoryCover}`,
+      );
+    }
+  }
+
+  // Conversation memory keeps a verbatim recent window and replaces older raw
+  // turns with a bounded binary-decay cover. This is derived from the durable
+  // chat history on each prompt, so there is no hidden background worker or
+  // second source of truth to get out of sync after edits.
   if (memoriesEnabled && workingMessages.length > 8) {
     const memorySource = workingMessages.slice(0, -8);
     const memoryCover = buildOptMemCover(
