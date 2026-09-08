@@ -1,0 +1,52 @@
+name: Conversation regressions
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/context-memories-search-duplicate]
+    paths:
+      - '.github/workflows/conversation-regressions.yml'
+      - 'src/**'
+      - 'scripts/test-conversation*'
+      - 'package.json'
+      - 'yarn.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conversation-regressions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.21.0'
+          cache: yarn
+      - name: Capture public source for regression diagnosis
+        run: |
+          mkdir -p "$RUNNER_TEMP/conversation-diagnostics"
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/conversation-diagnostics/source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/conversation-diagnostics/source-commit.txt"
+          npm view @monid-ai/cli version repository dist --json > "$RUNNER_TEMP/conversation-diagnostics/monid-package.json"
+          npm pack @monid-ai/cli --ignore-scripts --pack-destination "$RUNNER_TEMP/conversation-diagnostics"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conversation-repair-source
+          path: ${{ runner.temp }}/conversation-diagnostics
+          retention-days: 3
+          if-no-files-found: error
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: Behavioral regression harness
+        run: node --test scripts/test-conversation-features.cjs
+      - name: Full application typecheck
+        if: '!cancelled()'
+        run: yarn typecheck
