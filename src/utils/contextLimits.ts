@@ -2,7 +2,9 @@ import type {Model} from './types';
 
 const positiveFinite = (value: unknown): number | undefined => {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : undefined;
+  return Number.isFinite(numeric) && numeric > 0
+    ? Math.floor(numeric)
+    : undefined;
 };
 
 /** Prefer GGUF metadata parsed from the actual file; HF metadata is fallback. */
