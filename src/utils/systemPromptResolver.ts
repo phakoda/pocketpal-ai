@@ -89,7 +89,8 @@ export function assembleMessages(
       4096,
   );
   const sessionId = chatSessionStore.activeSessionId || undefined;
-  const memoriesEnabled = chatFeatureStore.ensureConversationPreference(sessionId);
+  const memoriesEnabled =
+    chatFeatureStore.ensureConversationPreference(sessionId);
 
   let workingMessages = followingMessages as PromptMessage[];
 
