@@ -30,16 +30,48 @@ jobs:
         with:
           node-version: '22.21.0'
           cache: yarn
-      - name: Capture public source for regression diagnosis
+      - name: Probe public search contracts without credentials
         run: |
           mkdir -p "$RUNNER_TEMP/conversation-diagnostics"
-          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/conversation-diagnostics/source.tar.gz"
-          git rev-parse HEAD > "$RUNNER_TEMP/conversation-diagnostics/source-commit.txt"
-          npm view @monid-ai/cli version repository dist --json > "$RUNNER_TEMP/conversation-diagnostics/monid-package.json"
-          npm pack @monid-ai/cli --ignore-scripts --pack-destination "$RUNNER_TEMP/conversation-diagnostics"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const results = [];
+          async function request(name, url, init = {}) {
+            try {
+              const response = await fetch(url, {...init, signal: AbortSignal.timeout(20000), redirect: 'error'});
+              const body = (await response.text()).slice(0, 200000);
+              results.push({name, status: response.status, body});
+              console.log(name, response.status, body.slice(0, 200));
+              return {response, body};
+            } catch (e) {
+              results.push({name, error: String(e)});
+              return {};
+            }
+          }
+          await request('TinyFish without a key', 'https://api.search.tinyfish.ai?query=PocketPal');
+          await request('Monid TinyFish inspect without a key', 'https://api.monid.ai/v1/inspect', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({provider: 'tinyfish', endpoint: '/search'}),
+          });
+          const endpoint = 'https://mcp.exa.ai/mcp';
+          const headers = {'Content-Type': 'application/json', Accept: 'application/json, text/event-stream'};
+          const init = await request('Exa initialize without a key', endpoint, {
+            method: 'POST', headers,
+            body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'initialize', params: {protocolVersion: '2025-03-26', capabilities: {}, clientInfo: {name: 'pocketpal-regression-probe', version: '1.0'}}}),
+          });
+          if (init.response?.ok) {
+            const session = init.response.headers.get('mcp-session-id');
+            if (session) headers['Mcp-Session-Id'] = session;
+            headers['MCP-Protocol-Version'] = '2025-03-26';
+            await request('Exa initialized', endpoint, {method: 'POST', headers, body: JSON.stringify({jsonrpc: '2.0', method: 'notifications/initialized'})});
+            await request('Exa tools', endpoint, {method: 'POST', headers, body: JSON.stringify({jsonrpc: '2.0', id: 2, method: 'tools/list'})});
+            await request('Exa public search without a key', endpoint, {method: 'POST', headers, body: JSON.stringify({jsonrpc: '2.0', id: 3, method: 'tools/call', params: {name: 'web_search_exa', arguments: {query: 'PocketPal local AI GitHub', numResults: 2, contextMaxCharacters: 1500}}})});
+          }
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/conversation-diagnostics/search-contracts.json`, JSON.stringify(results, null, 2));
+          JS
       - uses: actions/upload-artifact@v4
         with:
-          name: conversation-repair-source
+          name: search-contract-diagnostics
           path: ${{ runner.temp }}/conversation-diagnostics
           retention-days: 3
           if-no-files-found: error
