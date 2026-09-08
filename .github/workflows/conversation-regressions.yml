@@ -1,0 +1,53 @@
+name: Conversation regressions
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/context-memories-search-duplicate]
+    paths:
+      - '.github/workflows/conversation-regressions.yml'
+      - 'src/**'
+      - 'scripts/test-conversation*'
+      - 'package.json'
+      - 'yarn.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conversation-regressions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.21.0'
+          cache: yarn
+      - name: Collect formatter for offline repair validation
+        run: |
+          mkdir -p "$RUNNER_TEMP/repair-tooling"
+          VERSION=$(node -p "require('./package.json').devDependencies.prettier")
+          npm pack "prettier@$VERSION" --ignore-scripts --pack-destination "$RUNNER_TEMP/repair-tooling"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conversation-repair-tooling
+          path: ${{ runner.temp }}/repair-tooling
+          retention-days: 3
+          if-no-files-found: error
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: Behavioral regression harness
+        run: node --test scripts/test-conversation-features.cjs
+      - name: Synthetic controls regression harness
+        if: '!cancelled()'
+        run: node --test scripts/test-conversation-controls.cjs
+      - name: Full application typecheck
+        if: '!cancelled()'
+        run: yarn typecheck

@@ -4,6 +4,7 @@ import {TavilyProvider} from './providers/tavily';
 import {BraveProvider} from './providers/brave';
 import {ExaProvider} from './providers/exa';
 import {ParallelProvider} from './providers/parallel';
+import {TinyFishProvider} from './providers/tinyfish';
 
 export type {
   SearchProvider,
@@ -35,6 +36,8 @@ export const createSearchProvider = (
       return new ExaProvider(getKey);
     case 'parallel':
       return new ParallelProvider(getKey);
+    case 'tinyfish':
+      return new TinyFishProvider(getKey);
   }
 };
 

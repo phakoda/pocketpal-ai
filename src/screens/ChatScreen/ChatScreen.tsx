@@ -31,6 +31,7 @@ import {ErrorState} from '../../utils/errors';
 import {user, assistant} from '../../utils/chat';
 
 import {VideoPalScreen} from './VideoPalScreen';
+import {ConversationControls} from '../../components/ConversationControls/ConversationControls';
 
 const renderBubble = ({
   child,
@@ -257,6 +258,7 @@ export const ChatScreen: React.FC = observer(() => {
   return (
     <>
       <ChatView
+        customContent={<ConversationControls />}
         renderBubble={renderBubble}
         messages={chatSessionStore.currentSessionMessages}
         activePal={activePal}

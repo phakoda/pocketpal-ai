@@ -1,4 +1,5 @@
 import React, {useRef} from 'react';
+import {createConversationRun} from '../services/conversation/runtime';
 
 import {toJS, runInAction} from 'mobx';
 import type {JinjaFormattedChatResult} from 'llama.rn';
@@ -35,7 +36,6 @@ import {
 import {
   collectSystemPromptFragments,
   seedReadUrlAllowlist,
-  talentRegistry,
 } from '../services/talents';
 import type {ToolDefinition} from '../services/talents/types';
 import {
@@ -529,6 +529,7 @@ export const useChatSession = (
 
     const isMultimodalEnabled = modelStore.activeModelCaps.visionActive;
 
+    const sessionIdBeforeSend = chatSessionStore.activeSessionId;
     const currentMessages = toJS(chatSessionStore.currentSessionMessages);
 
     const textMessage: MessageType.Text = {
@@ -634,11 +635,16 @@ export const useChatSession = (
     }
 
     try {
-      const events = runAgent({
+      const conversationRun = await createConversationRun({
         engine,
-        initialParams: cleanCompletionParams as ApiCompletionParams,
+        params: cleanCompletionParams as ApiCompletionParams,
         allowedTalentNames: palTalents,
-        talentLookup: name => talentRegistry.get(name),
+        sessionId: messageInfo.sessionId,
+        isNewSession: !sessionIdBeforeSend,
+        signal: abortRef.current.signal,
+      });
+      const events = runAgent({
+        ...conversationRun,
         triggerMarkers,
         messageId: messageInfo.id,
         signal: abortRef.current.signal,
@@ -662,6 +668,7 @@ export const useChatSession = (
       let toolCallTokensRaw = 0;
       const TOOL_TOKEN_BUCKET = 10;
 
+      let memoryRunSucceeded = false;
       for await (const event of events) {
         if (abortRef.current?.signal.aborted && event.type === 'token') {
           continue;
@@ -716,11 +723,27 @@ export const useChatSession = (
           lastYieldTs = performance.now();
         }
 
+        if (event.type === 'run_finished') {
+          const reply = event.result.finalResult;
+          memoryRunSucceeded =
+            !event.result.hitMaxTurns &&
+            !!reply.content?.trim() &&
+            !reply.interrupted &&
+            !reply.context_full &&
+            !reply.truncated &&
+            !reply.tool_calls?.length;
+        }
         if (event.type === 'run_failed') {
           throw event.error;
         }
       }
 
+      // The event stream has drained. Never run two native completions at once
+      // or turn a successful delivered answer into a failed turn on save error.
+      if (memoryRunSucceeded && abortRef.current?.signal.aborted === false) {
+        modelStore.setIsStreaming(false);
+        await conversationRun.finalizeMemories();
+      }
       modelStore.setInferencing(false);
       modelStore.setIsStreaming(false);
       chatSessionStore.setIsGenerating(false);
