@@ -1,0 +1,164 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/context-memories-search-duplicate
+    paths:
+      - '.github/workflows/build-apk.yml'
+      - 'android/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'babel.config.js'
+      - 'metro.config.js'
+      - 'react-native.config.js'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ORG_GRADLE_PROJECT_rnllamaBuildFromSource: 'true'
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Maximize build space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+          df -h /
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.21.0'
+          cache: yarn
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Derive llama.rn variant allowlist
+        run: |
+          set -euo pipefail
+          VARIANTS=$(node scripts/verify-android-payload.js --print-variants)
+          echo "Declared allowlist: $VARIANTS"
+          echo "ORG_GRADLE_PROJECT_rnllamaVariants=$VARIANTS" >> "$GITHUB_ENV"
+
+      - name: Cache llama.rn native build tree
+        uses: actions/cache@v4
+        with:
+          path: node_modules/llama.rn/android/.cxx
+          key: ${{ runner.os }}-cxx-${{ hashFiles('yarn.lock', 'scripts/android-payload-manifest.json') }}
+
+      - name: Set up Hexagon SDK
+        uses: ./.github/actions/setup-hexagon-sdk
+
+      - name: Set up ccache
+        uses: ./.github/actions/setup-ccache
+
+      - name: Create CI Google services config
+        run: |
+          cat > android/app/google-services.json << 'EOF'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "dummy-project-for-ci",
+              "storage_bucket": "dummy-project-for-ci.appspot.com"
+            },
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+                "android_client_info": {"package_name": "com.pocketpalai"}
+              },
+              "api_key": [{"current_key": "dummy-api-key-for-ci-builds"}]
+            }]
+          }
+          EOF
+
+      - name: Create CI environment
+        run: |
+          cat > .env << 'EOF'
+          FIREBASE_FUNCTIONS_URL=https://dummy-firebase-url.com
+          SUPABASE_URL=https://dummy-supabase-url.supabase.co
+          SUPABASE_ANON_KEY=dummy-anon-key-for-ci-builds
+          PALSHUB_API_BASE_URL=https://dummy-palshub-api.com
+          APP_URL=pocketpal://app
+          ENABLE_PALSHUB_INTEGRATION=true
+          ENABLE_AUTHENTICATION=true
+          ENABLE_OFFLINE_MODE=true
+          GOOGLE_IOS_CLIENT_ID=dummy-ios-client-id.apps.googleusercontent.com
+          GOOGLE_WEB_CLIENT_ID=dummy-web-client-id.apps.googleusercontent.com
+          EOF
+
+      - name: Create ephemeral release keystore
+        working-directory: android/app
+        run: |
+          keytool -genkeypair -v \
+            -storetype PKCS12 \
+            -keystore pocketpal-release-key.keystore \
+            -alias pocketpal_key_alias \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass dummy-ci-password \
+            -keypass dummy-ci-password \
+            -dname "CN=CI Build, OU=CI, O=PocketPal, L=CI, S=CI, C=US"
+
+      - name: Build prod release APK
+        working-directory: android
+        env:
+          APP_RELEASE_STORE_PASSWORD: dummy-ci-password
+          APP_RELEASE_KEY_PASSWORD: dummy-ci-password
+        run: |
+          set -euo pipefail
+          ./gradlew assembleProdRelease 2>&1 | tee android-build.log
+
+      - name: Verify llama.rn variant allowlist
+        run: |
+          set -euo pipefail
+          VARIANTS=$(node scripts/verify-android-payload.js --print-variants)
+          grep -qF "Building rnllama variants: $VARIANTS" android/android-build.log
+
+      - name: Verify APK payload
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/prod/release/app-prod-release.apk
+          test -s "$APK"
+          node scripts/verify-android-payload.js --apk "$APK" --report payload-report.txt
+          unzip -t "$APK" >/dev/null
+
+      - name: Upload payload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-payload-report
+          path: payload-report.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocketpal-android-apk
+          path: android/app/build/outputs/apk/prod/release/app-prod-release.apk
+          if-no-files-found: error
+          retention-days: 14
