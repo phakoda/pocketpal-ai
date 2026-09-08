@@ -2,23 +2,9 @@ name: Build IPA
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - feat/context-memories-search-duplicate
-    paths:
-      - '.github/workflows/build-ipa.yml'
-      - 'ios/**'
-      - 'src/**'
-      - 'package.json'
-      - 'yarn.lock'
-      - 'Gemfile'
-      - 'Gemfile.lock'
-      - 'babel.config.js'
-      - 'metro.config.js'
-      - 'react-native.config.js'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-ipa-${{ github.ref }}
@@ -241,6 +227,30 @@ jobs:
             ios/build/PocketPal-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
+
+      - name: Attach IPA to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_KIND: ${{ steps.signing.outputs.kind }}
+        run: |
+          set -euo pipefail
+          if [ "$BUILD_KIND" = "signed" ]; then
+            IPA="ios/build/PocketPal.ipa"
+          else
+            IPA="ios/build/PocketPal-unsigned.ipa"
+          fi
+          test -s "$IPA"
+
+          TAG="ipa-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          TITLE="PocketPal iOS ${BUILD_KIND} build #${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          NOTES="Automated iOS ${BUILD_KIND} build from commit ${GITHUB_SHA}.\n\nWorkflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          gh release create "$TAG" "$IPA" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --title "$TITLE" \
+            --notes "$NOTES"
 
       - name: Upload IPA verification details
         if: always()
