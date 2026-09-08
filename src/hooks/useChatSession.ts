@@ -1,4 +1,5 @@
 import React, {useRef} from 'react';
+import {createConversationRun} from '../services/conversation/runtime';
 
 import {toJS, runInAction} from 'mobx';
 import type {JinjaFormattedChatResult} from 'llama.rn';
@@ -35,7 +36,6 @@ import {
 import {
   collectSystemPromptFragments,
   seedReadUrlAllowlist,
-  talentRegistry,
 } from '../services/talents';
 import type {ToolDefinition} from '../services/talents/types';
 import {
@@ -529,6 +529,7 @@ export const useChatSession = (
 
     const isMultimodalEnabled = modelStore.activeModelCaps.visionActive;
 
+    const sessionIdBeforeSend = chatSessionStore.activeSessionId;
     const currentMessages = toJS(chatSessionStore.currentSessionMessages);
 
     const textMessage: MessageType.Text = {
@@ -634,11 +635,16 @@ export const useChatSession = (
     }
 
     try {
-      const events = runAgent({
+      const conversationRun = await createConversationRun({
         engine,
-        initialParams: cleanCompletionParams as ApiCompletionParams,
+        params: cleanCompletionParams as ApiCompletionParams,
         allowedTalentNames: palTalents,
-        talentLookup: name => talentRegistry.get(name),
+        sessionId: messageInfo.sessionId,
+        isNewSession: !sessionIdBeforeSend,
+        signal: abortRef.current.signal,
+      });
+      const events = runAgent({
+        ...conversationRun,
         triggerMarkers,
         messageId: messageInfo.id,
         signal: abortRef.current.signal,

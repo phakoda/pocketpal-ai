@@ -60,6 +60,7 @@ import {
 import type {SearchProviderId} from '../../services/search/types';
 
 import {CacheType, ModelType} from '../../utils/types';
+import {modelContextMaximum} from '../../services/conversation/limits';
 import {
   L10nContext,
   formatBytes,
@@ -189,11 +190,18 @@ export const SettingsScreen: React.FC = observer(() => {
 
   const handleContextSizeChange = (text: string) => {
     setContextSize(text);
-    const value = parseInt(text, 10);
-    if (!isNaN(value) && value >= modelStore.MIN_CONTEXT_SIZE) {
+    const value = Number(text);
+    const maximum = modelContextMaximum(modelStore.activeModel);
+    if (
+      /^\d+$/.test(text.trim()) &&
+      Number.isSafeInteger(value) &&
+      value >= modelStore.MIN_CONTEXT_SIZE &&
+      (maximum === undefined || value <= maximum)
+    ) {
       setIsValidInput(true);
       debouncedUpdateStore(value);
     } else {
+      debouncedUpdateStore.cancel();
       setIsValidInput(false);
     }
   };

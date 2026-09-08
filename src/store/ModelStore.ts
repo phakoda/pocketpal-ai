@@ -104,6 +104,7 @@ import {
 } from '../utils/contextInitParamsVersions';
 import NativeHardwareInfo from '../specs/NativeHardwareInfo';
 import {getModelMemoryRequirement} from '../utils/memoryEstimator';
+import {modelContextMaximum} from '../services/conversation/limits';
 import {loadLlamaModelInfo} from 'llama.rn';
 
 /**
@@ -413,10 +414,14 @@ class ModelStore {
   };
 
   setNContext = (n_ctx: number) => {
+    if (!Number.isSafeInteger(n_ctx) || n_ctx < this.MIN_CONTEXT_SIZE) {
+      return;
+    }
+    const maximum = modelContextMaximum(this.activeModel);
     runInAction(() => {
       this.contextInitParams = {
         ...this.contextInitParams,
-        n_ctx,
+        n_ctx: Math.min(n_ctx, maximum ?? n_ctx),
       };
     });
   };
