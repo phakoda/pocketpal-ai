@@ -1,0 +1,184 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/context-memories-search-duplicate
+    paths:
+      - '.github/workflows/build-ipa.yml'
+      - 'ios/**'
+      - 'src/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'Gemfile'
+      - 'Gemfile.lock'
+      - 'babel.config.js'
+      - 'metro.config.js'
+      - 'react-native.config.js'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ipa:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      NODE_OPTIONS: '--max-old-space-size=8192'
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.21.0'
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2.3'
+          bundler-cache: true
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: pod install
+
+      - name: Create Env.xcconfig
+        env:
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
+          REVERSED_GOOGLE_IOS_CLIENT_ID: ${{ vars.REVERSED_GOOGLE_IOS_CLIENT_ID }}
+        run: |
+          cat > ios/Config/Env.xcconfig << EOF
+          // Generated for CI artifact builds.
+          GOOGLE_WEB_CLIENT_ID = ${GOOGLE_WEB_CLIENT_ID:-dummy-web-client-id.apps.googleusercontent.com}
+          REVERSED_GOOGLE_IOS_CLIENT_ID = ${REVERSED_GOOGLE_IOS_CLIENT_ID:-com.googleusercontent.apps.dummy-ios-client-id}
+          EOF
+
+      - name: Create CI environment
+        env:
+          FIREBASE_FUNCTIONS_URL: ${{ vars.FIREBASE_FUNCTIONS_URL }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          PALSHUB_API_BASE_URL: ${{ vars.PALSHUB_API_BASE_URL }}
+          GOOGLE_IOS_CLIENT_ID: ${{ vars.GOOGLE_IOS_CLIENT_ID }}
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          cat > .env << EOF
+          FIREBASE_FUNCTIONS_URL=${FIREBASE_FUNCTIONS_URL:-https://dummy-firebase-url.com}
+          SUPABASE_URL=${SUPABASE_URL:-https://dummy-supabase-url.supabase.co}
+          SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-dummy-anon-key-for-ci-builds}
+          PALSHUB_API_BASE_URL=${PALSHUB_API_BASE_URL:-https://dummy-palshub-api.com}
+          APP_URL=pocketpal://app
+          ENABLE_PALSHUB_INTEGRATION=true
+          ENABLE_AUTHENTICATION=true
+          ENABLE_OFFLINE_MODE=true
+          GOOGLE_IOS_CLIENT_ID=${GOOGLE_IOS_CLIENT_ID:-dummy-ios-client-id.apps.googleusercontent.com}
+          GOOGLE_WEB_CLIENT_ID=${GOOGLE_WEB_CLIENT_ID:-dummy-web-client-id.apps.googleusercontent.com}
+          EOF
+
+      - name: Create GoogleService-Info.plist
+        env:
+          GOOGLE_SERVICES_PLIST: ${{ secrets.GOOGLE_SERVICES_PLIST }}
+        run: |
+          if [ -n "${GOOGLE_SERVICES_PLIST:-}" ]; then
+            printf '%s' "$GOOGLE_SERVICES_PLIST" > ios/GoogleService-Info.plist
+          else
+            cat > ios/GoogleService-Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CLIENT_ID</key><string>dummy-client-id.apps.googleusercontent.com</string>
+            <key>REVERSED_CLIENT_ID</key><string>com.googleusercontent.apps.dummy-client-id</string>
+            <key>API_KEY</key><string>dummy-api-key-for-ci-builds</string>
+            <key>GCM_SENDER_ID</key><string>000000000000</string>
+            <key>PLIST_VERSION</key><string>1</string>
+            <key>BUNDLE_ID</key><string>ai.pocketpal</string>
+            <key>PROJECT_ID</key><string>dummy-project-for-ci</string>
+            <key>STORAGE_BUCKET</key><string>dummy-project-for-ci.appspot.com</string>
+            <key>IS_ADS_ENABLED</key><false/>
+            <key>IS_ANALYTICS_ENABLED</key><false/>
+            <key>IS_APPINVITE_ENABLED</key><false/>
+            <key>IS_GCM_ENABLED</key><true/>
+            <key>IS_SIGNIN_ENABLED</key><true/>
+            <key>GOOGLE_APP_ID</key><string>1:000000000000:ios:0000000000000000</string>
+          </dict></plist>
+          EOF
+          fi
+          plutil -lint ios/GoogleService-Info.plist
+
+      - name: Verify signing configuration is available
+        env:
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_GITHUB_TOKEN: ${{ secrets.MATCH_GITHUB_TOKEN }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in MATCH_GIT_URL MATCH_GITHUB_TOKEN APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID APP_STORE_CONNECT_API_KEY_CONTENT; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required repository secret: $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Build signed IPA
+        working-directory: ios
+        env:
+          CI: 'true'
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_GITHUB_TOKEN: ${{ secrets.MATCH_GITHUB_TOKEN }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+          APP_STORE_CONNECT_USER_ID: ${{ secrets.APP_STORE_CONNECT_USER_ID }}
+        run: bundle exec fastlane build_for_device_farm
+
+      - name: Verify IPA structure and signature
+        run: |
+          set -euo pipefail
+          IPA=ios/build/PocketPal.ipa
+          test -s "$IPA"
+          unzip -t "$IPA" >/dev/null
+          work=$(mktemp -d)
+          unzip -q "$IPA" -d "$work"
+          APP="$work/Payload/PocketPal.app"
+          test -d "$APP"
+          codesign --verify --deep --strict "$APP"
+          codesign -dv --verbose=2 "$APP" 2>&1 | tee ipa-signature.txt
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocketpal-ios-ipa
+          path: ios/build/PocketPal.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload signature details
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocketpal-ios-signature
+          path: ipa-signature.txt
+          if-no-files-found: ignore
+          retention-days: 14
