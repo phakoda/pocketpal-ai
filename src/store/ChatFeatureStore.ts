@@ -6,10 +6,20 @@ type ConversationFeatures = {
   memoriesEnabled: boolean;
 };
 
+export type PalMemorySnapshot = {
+  sessionId: string;
+  updatedAt: number;
+  cover: string;
+};
+
+const MAX_PAL_MEMORY_SESSIONS = 16;
+
 class ChatFeatureStore {
   conversationFeatures: Record<string, ConversationFeatures> = {};
   newChatMemoriesEnabled = false;
   modelSystemPrompts: Record<string, string> = {};
+  palMemoriesEnabled: Record<string, boolean> = {};
+  palMemorySnapshots: Record<string, PalMemorySnapshot[]> = {};
 
   constructor() {
     makeAutoObservable(this);
@@ -19,6 +29,8 @@ class ChatFeatureStore {
         'conversationFeatures',
         'newChatMemoriesEnabled',
         'modelSystemPrompts',
+        'palMemoriesEnabled',
+        'palMemorySnapshots',
       ],
       storage: AsyncStorage,
     });
@@ -91,6 +103,69 @@ class ChatFeatureStore {
     };
     this.newChatMemoriesEnabled = false;
     return enabled;
+  }
+
+  getPalMemoriesEnabled(palId?: string): boolean {
+    if (!palId) {
+      return false;
+    }
+    return this.palMemoriesEnabled[palId] === true;
+  }
+
+  setPalMemoriesEnabled(palId: string, enabled: boolean): void {
+    this.palMemoriesEnabled = {
+      ...this.palMemoriesEnabled,
+      [palId]: enabled,
+    };
+  }
+
+  /**
+   * Store one compact snapshot per conversation for a Pal. Re-running a turn
+   * in the same conversation replaces that conversation's snapshot instead of
+   * appending duplicate history. The newest bounded set is retained so Pal
+   * memory cannot grow without limit in AsyncStorage.
+   */
+  upsertPalMemorySnapshot(
+    palId: string,
+    sessionId: string,
+    cover: string,
+  ): void {
+    const normalizedCover = cover.trim();
+    if (!palId || !sessionId || !normalizedCover) {
+      return;
+    }
+
+    const previous = this.palMemorySnapshots[palId] ?? [];
+    const withoutCurrentSession = previous.filter(
+      snapshot => snapshot.sessionId !== sessionId,
+    );
+    const next = [
+      ...withoutCurrentSession,
+      {sessionId, updatedAt: Date.now(), cover: normalizedCover},
+    ]
+      .sort((left, right) => left.updatedAt - right.updatedAt)
+      .slice(-MAX_PAL_MEMORY_SESSIONS);
+
+    this.palMemorySnapshots = {
+      ...this.palMemorySnapshots,
+      [palId]: next,
+    };
+  }
+
+  /**
+   * Return only memories that belong to the requested Pal. The active session
+   * is excluded so current-chat context never gets duplicated as Pal memory.
+   */
+  getPalMemorySnapshots(
+    palId?: string,
+    excludeSessionId?: string,
+  ): PalMemorySnapshot[] {
+    if (!palId) {
+      return [];
+    }
+    return (this.palMemorySnapshots[palId] ?? []).filter(
+      snapshot => snapshot.sessionId !== excludeSessionId,
+    );
   }
 }
 
