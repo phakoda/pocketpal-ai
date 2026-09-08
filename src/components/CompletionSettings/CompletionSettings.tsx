@@ -1,8 +1,9 @@
 import {View} from 'react-native';
-import React from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 
+import {observer} from 'mobx-react';
 import {InputSlider} from '../InputSlider';
-import {Text, Switch, SegmentedButtons} from 'react-native-paper';
+import {Button, Text, Switch, SegmentedButtons} from 'react-native-paper';
 
 import {TextInput} from '..';
 
@@ -16,6 +17,10 @@ import {
   validateNumericField,
 } from '../../utils/modelSettings';
 import {CompletionParams} from '../../utils/completionTypes';
+import {chatSessionStore, modelStore, serverStore} from '../../store';
+import {chatFeatureStore} from '../../store/ChatFeatureStore';
+import {getModelMaxContext} from '../../utils/contextLimits';
+import {getModelMemoryRequirement} from '../../utils/memoryEstimator';
 
 interface Props {
   settings: CompletionParams;
@@ -23,7 +28,18 @@ interface Props {
   disabled?: boolean;
 }
 
-export const CompletionSettings: React.FC<Props> = ({
+const formatMemory = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return 'Unavailable';
+  }
+  const gib = bytes / (1024 * 1024 * 1024);
+  if (gib >= 1) {
+    return `${gib.toFixed(gib >= 10 ? 1 : 2)} GiB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`;
+};
+
+export const CompletionSettings: React.FC<Props> = observer(({
   settings,
   onChange,
   disabled = false,
@@ -31,6 +47,97 @@ export const CompletionSettings: React.FC<Props> = ({
   const theme = useTheme();
   const styles = createStyles(theme);
   const l10n = React.useContext(L10nContext);
+
+  const activeModel = modelStore.activeModel;
+  const activeSessionId = chatSessionStore.activeSessionId || undefined;
+  const remoteMaxContext = activeModel?.id
+    ? serverStore.remoteCaps[activeModel.id]?.contextLength
+    : undefined;
+  const modelMaxContext = remoteMaxContext ?? getModelMaxContext(activeModel);
+
+  const [contextLimit, setContextLimit] = useState(
+    modelStore.contextInitParams.n_ctx.toString(),
+  );
+  const [memoriesEnabled, setMemoriesEnabled] = useState(
+    chatFeatureStore.getMemoriesEnabled(activeSessionId),
+  );
+  const embeddedSystemPrompt = activeModel?.chatTemplate?.systemPrompt ?? '';
+  const [systemPrompt, setSystemPrompt] = useState(
+    activeModel?.id
+      ? (chatFeatureStore.getModelSystemPrompt(activeModel.id) ??
+          embeddedSystemPrompt)
+      : '',
+  );
+
+  useEffect(() => {
+    setContextLimit(modelStore.contextInitParams.n_ctx.toString());
+  }, [modelStore.contextInitParams.n_ctx, activeModel?.id]);
+
+  useEffect(() => {
+    setMemoriesEnabled(chatFeatureStore.getMemoriesEnabled(activeSessionId));
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeModel?.id) {
+      setSystemPrompt('');
+      return;
+    }
+    setSystemPrompt(
+      chatFeatureStore.getModelSystemPrompt(activeModel.id) ??
+        (activeModel.chatTemplate?.systemPrompt ?? ''),
+    );
+  }, [activeModel?.id]);
+
+  const parsedContextLimit = Number.parseInt(contextLimit, 10);
+  const contextLimitValid =
+    Number.isFinite(parsedContextLimit) &&
+    parsedContextLimit >= modelStore.MIN_CONTEXT_SIZE &&
+    (!modelMaxContext || parsedContextLimit <= modelMaxContext);
+
+  const estimatedMemory = useMemo(() => {
+    if (!activeModel || !contextLimitValid || activeModel.size <= 0) {
+      return undefined;
+    }
+    try {
+      return getModelMemoryRequirement(activeModel, undefined, {
+        ...modelStore.contextInitParams,
+        n_ctx: parsedContextLimit,
+      });
+    } catch {
+      return undefined;
+    }
+  }, [
+    activeModel,
+    contextLimitValid,
+    parsedContextLimit,
+    modelStore.contextInitParams,
+  ]);
+
+  const applyContextLimit = () => {
+    if (contextLimitValid) {
+      modelStore.setNContext(parsedContextLimit);
+    }
+  };
+
+  const updateMemories = (enabled: boolean) => {
+    setMemoriesEnabled(enabled);
+    chatFeatureStore.setMemoriesEnabled(activeSessionId, enabled);
+  };
+
+  const updateSystemPrompt = (prompt: string) => {
+    setSystemPrompt(prompt);
+    if (activeModel?.id) {
+      chatFeatureStore.setModelSystemPrompt(activeModel.id, prompt);
+    }
+  };
+
+  const resetSystemPrompt = () => {
+    if (!activeModel?.id) {
+      return;
+    }
+    chatFeatureStore.clearModelSystemPrompt(activeModel.id);
+    setSystemPrompt(activeModel.chatTemplate?.systemPrompt ?? '');
+  };
 
   const renderSlider = ({name, step = 0.01}: {name: string; step?: number}) => (
     <View style={styles.settingItem}>
@@ -197,9 +304,150 @@ export const CompletionSettings: React.FC<Props> = ({
     );
   };
 
+  const renderThinkingBudget = () => {
+    const budget = settings.thinking_budget_tokens ?? -1;
+    const unlimited = budget < 0;
+    const maximum = Math.max(
+      64,
+      Math.min(
+        modelMaxContext ?? modelStore.contextInitParams.n_ctx,
+        modelStore.contextInitParams.n_ctx,
+      ),
+    );
+
+    return (
+      <View style={styles.settingItem}>
+        <Text variant="labelSmall" style={styles.settingLabel}>
+          THINKING LIMIT
+        </Text>
+        <Text style={styles.description}>
+          Maximum tokens the model may spend inside a reasoning block. Unlimited
+          uses the model/runtime default.
+        </Text>
+        <SegmentedButtons
+          value={unlimited ? 'unlimited' : 'custom'}
+          onValueChange={
+            disabled
+              ? () => {}
+              : value =>
+                  onChange(
+                    'thinking_budget_tokens',
+                    value === 'unlimited' ? -1 : Math.min(1024, maximum),
+                  )
+          }
+          density="high"
+          buttons={[
+            {value: 'unlimited', label: 'Unlimited'},
+            {value: 'custom', label: 'Custom'},
+          ]}
+          style={styles.segmentedButtons}
+        />
+        {!unlimited && (
+          <InputSlider
+            testID="thinking-budget-slider"
+            value={Math.min(Math.max(64, budget), maximum)}
+            onValueChange={value =>
+              onChange('thinking_budget_tokens', Math.round(value))
+            }
+            min={64}
+            max={maximum}
+            step={64}
+            precision={0}
+            disabled={disabled}
+          />
+        )}
+      </View>
+    );
+  };
+
+  const renderContextAndMemory = () => {
+    const contextHelper = !contextLimitValid
+      ? modelMaxContext
+        ? `Enter ${modelStore.MIN_CONTEXT_SIZE.toLocaleString()}–${modelMaxContext.toLocaleString()} tokens for this model.`
+        : `Enter at least ${modelStore.MIN_CONTEXT_SIZE.toLocaleString()} tokens.`
+      : modelMaxContext
+        ? `Model maximum: ${modelMaxContext.toLocaleString()} tokens. Takes effect after the model reloads.`
+        : 'Model maximum is not reported. Takes effect after the model reloads.';
+
+    return (
+      <>
+        <View style={styles.settingItem}>
+          <Text variant="labelSmall" style={styles.settingLabel}>
+            CONTEXT LIMIT
+          </Text>
+          <Text style={styles.description}>
+            Controls the model context allocation. The limit is capped by the
+            active model's reported maximum when that metadata is available.
+          </Text>
+          <TextInput
+            value={contextLimit}
+            onChangeText={setContextLimit}
+            onBlur={applyContextLimit}
+            keyboardType="numeric"
+            error={!contextLimitValid}
+            helperText={contextHelper}
+            testID="generation-context-limit-input"
+          />
+          <Text style={styles.description}>
+            Estimated model + KV memory at this limit:{' '}
+            {estimatedMemory === undefined
+              ? 'unavailable for this model'
+              : formatMemory(estimatedMemory)}
+          </Text>
+        </View>
+
+        <View style={styles.settingItem}>
+          <View style={styles.switchHeader}>
+            <Text variant="labelSmall" style={styles.settingLabel}>
+              CONVERSATION MEMORIES
+            </Text>
+            <Switch
+              value={memoriesEnabled}
+              onValueChange={updateMemories}
+              testID="conversation-memories-switch"
+            />
+          </View>
+          <Text style={styles.description}>
+            Keep recent turns verbatim while folding older turns into a compact,
+            OptMem-inspired binary memory cover. This toggle is stored per
+            conversation.
+          </Text>
+        </View>
+
+        <View style={styles.settingItem}>
+          <Text variant="labelSmall" style={styles.settingLabel}>
+            MODEL SYSTEM PROMPT
+          </Text>
+          <Text style={styles.description}>
+            Edit the system prompt used by this model. Pal system prompts keep
+            higher priority. An empty value intentionally disables the model
+            prompt.
+          </Text>
+          <TextInput
+            value={systemPrompt}
+            onChangeText={updateSystemPrompt}
+            editable={!!activeModel}
+            multiline
+            numberOfLines={5}
+            testID="model-system-prompt-input"
+          />
+          <Button
+            mode="text"
+            onPress={resetSystemPrompt}
+            disabled={!activeModel}
+            testID="reset-model-system-prompt">
+            Reset to model default
+          </Button>
+        </View>
+      </>
+    );
+  };
+
   return (
     <View style={styles.container} testID="completion-settings">
+      {renderContextAndMemory()}
       {renderNPredictField()}
+      {renderThinkingBudget()}
       {renderSwitch('include_thinking_in_context')}
       {renderSlider({name: 'temperature'})}
       {renderSlider({name: 'top_k', step: 1})}
@@ -223,4 +471,4 @@ export const CompletionSettings: React.FC<Props> = ({
       {renderSwitch('jinja')}
     </View>
   );
-};
+});
