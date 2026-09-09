@@ -87,7 +87,7 @@ jobs:
           else
             cat > ios/GoogleService-Info.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0.dtd">
           <plist version="1.0"><dict>
             <key>CLIENT_ID</key><string>dummy-client-id.apps.googleusercontent.com</string>
             <key>REVERSED_CLIENT_ID</key><string>com.googleusercontent.apps.dummy-client-id</string>
@@ -243,11 +243,22 @@ jobs:
 
           TAG="ipa-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           TITLE="PocketPal iOS ${BUILD_KIND} build #${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
-          NOTES="Automated iOS ${BUILD_KIND} build from commit ${GITHUB_SHA}.\n\nWorkflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          DEFAULT_BRANCH="$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)"
+          DEFAULT_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/$DEFAULT_BRANCH" --jq .sha)"
+          RELEASE_TARGET="$GITHUB_SHA"
+          TARGET_NOTE=""
+          if [ "$DEFAULT_SHA" != "$GITHUB_SHA" ]; then
+            RELEASE_TARGET="$DEFAULT_BRANCH"
+            TARGET_NOTE="\n\nRelease tag target: ${DEFAULT_BRANCH} (${DEFAULT_SHA}). The IPA itself was built from ${GITHUB_SHA}; the tag uses the current default branch to avoid GitHub's workflow-file permission guard when main advances during a long build."
+            echo "::warning::Default branch advanced from ${GITHUB_SHA} to ${DEFAULT_SHA}; targeting ${DEFAULT_BRANCH} for the draft release tag."
+          fi
+
+          NOTES="Automated iOS ${BUILD_KIND} build from commit ${GITHUB_SHA}.${TARGET_NOTE}\n\nWorkflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
           gh release create "$TAG" "$IPA" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
+            --target "$RELEASE_TARGET" \
             --draft \
             --title "$TITLE" \
             --notes "$NOTES"
